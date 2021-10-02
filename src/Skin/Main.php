@@ -5,9 +5,18 @@ namespace Skin;
 use pocketmine\plugin\PluginBase;
 use pocketmine\event\Listener;
 use pocketmine\event\player\PlayerLoginEvent;
+use pocketmine\event\server\DataPacketReceiveEvent;
 use pocketmine\Server;
 use pocketmine\utils\Config;
 use pocketmine\utils\UUID;
+use pocketmine\network\mcpe\protocol\LoginPacket;
+use pocketmine\network\mcpe\protocol\types\PersonaPieceTintColor;
+use pocketmine\network\mcpe\protocol\types\PersonaSkinPiece;
+use pocketmine\network\mcpe\protocol\types\PlayerPermissions;
+use pocketmine\network\mcpe\protocol\types\SkinAdapterSingleton;
+use pocketmine\network\mcpe\protocol\types\SkinAnimation;
+use pocketmine\network\mcpe\protocol\types\SkinData;
+use pocketmine\network\mcpe\protocol\types\SkinImage;
 
 class Main extends PluginBase implements Listener{
 
@@ -16,36 +25,79 @@ class Main extends PluginBase implements Listener{
 		if(!file_exists($this->getDataFolder())){
 			mkdir($this->getDataFolder(), 0744, true); 
 		}
-		$this->player = new Config($this->getDataFolder() . "skin.yml", Config::YAML, array());
-		$this->data = $this->player->getAll();
-	}
-
-	public function onDisable(){
-		$this->ConfigSave();
-	}
-
-	public function onLogin(PlayerLoginEvent $event){
-		$player = $event->getPlayer();
-		$name = strtolower($player->getName());
-		$skin = $player->getSkin();
-		$skinid = base64_encode($skin->getSkinId());
-		$skindata = base64_encode($skin->getSkinData());
-		$capedata = base64_encode($skin->getCapeData());
-		$geometryname = base64_encode($skin->getGeometryName());
-		$geometrydata = base64_encode($skin->getGeometryData());
-		$this->data[$name]["Name"] = $name;
-		$this->data[$name]["Skinid"] = $skinid;
-		$this->data[$name]["Skindata"] = $skindata;
-		$this->data[$name]["Capedata"] = $capedata;
-		$this->data[$name]["Geometryname"] = $geometryname;
-		$this->data[$name]["Geometrydata"] = $geometrydata;
-		$this->ConfigSave();
-	}
-
-	public function ConfigSave(){
-		foreach($this->data as $t){
-			$this->player->set($t["Name"], $t);
+		if(!file_exists($this->getDataFolder() . "player/")){
+			mkdir($this->getDataFolder() . "player/" , 0744, true); 
 		}
-		$this->player->save();
+	}
+
+	public function onReceive(DataPacketReceiveEvent $event){
+		$packet = $event->getPacket();
+		$player = $event->getPlayer();
+		$name = $player->getName();
+		if($packet instanceof LoginPacket){
+
+			$animations = [];
+			foreach($packet->clientData["AnimatedImageData"] as $animation){
+				$animations[] = new SkinAnimation(
+					new SkinImage(
+						$animation["ImageHeight"],
+						$animation["ImageWidth"],
+						base64_decode($animation["Image"], true)),
+					$animation["Type"],
+					$animation["Frames"],
+					$animation["AnimationExpression"]
+				);
+			}
+	
+			$personaPieces = [];
+			foreach($packet->clientData["PersonaPieces"] as $piece){
+				$personaPieces[] = new PersonaSkinPiece(
+					$piece["PieceId"],
+					$piece["PieceType"],
+					$piece["PackId"],
+					$piece["IsDefault"],
+					$piece["ProductId"]
+				);
+			}
+	
+			$pieceTintColors = [];
+			foreach($packet->clientData["PieceTintColors"] as $tintColor){
+				$pieceTintColors[] = new PersonaPieceTintColor($tintColor["PieceType"], $tintColor["Colors"]);
+			}
+
+			$skinData = new SkinData(
+				$packet->clientData["SkinId"],
+				$packet->clientData["PlayFabId"],
+				base64_decode($packet->clientData["SkinResourcePatch"] ?? "", true),
+				new SkinImage(
+					$packet->clientData["SkinImageHeight"],
+					$packet->clientData["SkinImageWidth"],
+					base64_decode($packet->clientData["SkinData"], true)
+				),
+				$animations,
+				new SkinImage(
+					$packet->clientData["CapeImageHeight"],
+					$packet->clientData["CapeImageWidth"],
+					base64_decode($packet->clientData["CapeData"] ?? "", true)
+				),
+				base64_decode($packet->clientData["SkinGeometryData"] ?? "", true),
+				base64_decode($packet->clientData["SkinGeometryDataEngineVersion"] ?? 0, true),
+				base64_decode($packet->clientData["SkinAnimationData"] ?? "", true),
+				$packet->clientData["CapeId"] ?? "",
+				null,
+				$packet->clientData["ArmSize"] ?? SkinData::ARM_SIZE_WIDE,
+				$packet->clientData["SkinColor"] ?? "",
+				$personaPieces,
+				$pieceTintColors,
+				true,
+				$packet->clientData["PremiumSkin"] ?? false,
+				$packet->clientData["PersonaSkin"] ?? false,
+				$packet->clientData["CapeOnClassicSkin"] ?? false,
+				true, //assume this is true? there's no field for it ...
+			);
+
+			$serialized_skinData = serialize($skinData);
+			file_put_contents($this->getDataFolder() . "player/".$packet->username.".ser", $serialized_skinData);
+		}
 	}
 }
